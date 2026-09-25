@@ -28,26 +28,7 @@ type MockStore struct {
 	indexerCursors     map[string]uint32
 	contractSpecs      map[string]ContractSpec
 
-	// Error injection
-	UpsertContractErr   error
-	GetContractErr      error
-	ListContractsErr    error
-	GetGlobalStatsErr   error
-	ListEventsErr       error
-	ListInvocationsErr  error
-	ListStorageErr      error
-	GetContractStatsErr error
-	RecentEventsErr     error
-	CreateAPIKeyErr     error
-	GetAPIKeyErr        error
-	UpsertUserErr       error
-	GetUserErr          error
-	ListUpgradesErr     error
-	GetHealthScoreErr   error
-
-	UpsertContractSpecErr error
-	GetContractSpecErr    error
-	contractVersions   map[string][]ContractVersion
+	contractVersions map[string][]ContractVersion
 
 	// Error injection
 	UpsertContractErr           error
@@ -69,6 +50,8 @@ type MockStore struct {
 	RecordContractVersionErr    error
 	ListContractVersionsErr     error
 	GetLatestContractVersionErr error
+	UpsertContractSpecErr       error
+	GetContractSpecErr          error
 }
 
 // NewMockStore returns an initialized MockStore.
@@ -852,4 +835,3 @@ func (m *MockStore) GetLatestContractVersion(_ context.Context, contractID strin
 	}
 	return latest, nil
 }
-

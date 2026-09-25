@@ -111,6 +111,10 @@ func (r *specRPC) GetTransaction(context.Context, string) (*TransactionResult, e
 	return &TransactionResult{}, nil
 }
 
+func (r *specRPC) GetContractWasmHash(context.Context, string) (string, error) {
+	return "", nil
+}
+
 func (r *specRPC) GetLedgerEntries(_ context.Context, keys []string) (*GetLedgerEntriesResult, error) {
 	r.calls++
 	out := &GetLedgerEntriesResult{}
