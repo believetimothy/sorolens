@@ -13,16 +13,29 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<Theme>("system");
+  // Gates the apply/persist effect until the stored theme has been read.
+  const [restored, setRestored] = useState(false);
 
   useEffect(() => {
-    // Read theme from localStorage on mount
-    const savedTheme = localStorage.getItem("theme") as Theme | null;
+    // Read the stored theme once, before anything is allowed to write. StrictMode
+    // mounts effects twice in development; persisting the "system" default here
+    // would overwrite the stored value, and the second pass would then read that
+    // default back — losing the user's choice on every reload.
+    let savedTheme: Theme | null = null;
+    try {
+      savedTheme = localStorage.getItem("theme") as Theme | null;
+    } catch {
+      // Storage can be unavailable (private mode); the system default stands.
+    }
     if (savedTheme) {
       setTheme(savedTheme);
     }
+    setRestored(true);
   }, []);
 
   useEffect(() => {
+    if (!restored) return;
+
     const applyTheme = (currentTheme: Theme) => {
       const isDark =
         currentTheme === "dark" ||
@@ -46,7 +59,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       mediaQuery.addEventListener("change", handleChange);
       return () => mediaQuery.removeEventListener("change", handleChange);
     }
-  }, [theme]);
+  }, [theme, restored]);
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme }}>
