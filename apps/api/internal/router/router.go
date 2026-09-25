@@ -97,7 +97,6 @@ func New(h *handler.Handler) http.Handler {
 		get("/contracts/{id}/spec", h.GetContractSpec)
 		get("/stream/events", h.StreamEventsSSE)
 
-
 		// API keys (admin scope + admin role).
 		r.With(scope, admin).Get("/api-keys", h.ListAPIKeys)
 		r.With(scope, admin).Post("/api-keys", h.CreateAPIKey)
@@ -127,6 +126,7 @@ func New(h *handler.Handler) http.Handler {
 		get("/watchdog/contracts", h.ListMonitoredContracts)
 		get("/watchdog/contracts/{id}", h.GetMonitoredContract)
 		get("/watchdog/contracts/{id}/health", h.ListHealthChecks)
+		get("/watchdog/contracts/{id}/uptime", h.GetContractUptime)
 		get("/watchdog/contracts/{id}/alerts", h.ListWatchdogAlerts)
 
 		// Alert notification subscriptions (issue #127). They hold
