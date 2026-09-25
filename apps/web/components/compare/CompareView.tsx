@@ -49,12 +49,15 @@ export function CompareView({ initialIds, initialWindow }: CompareViewProps) {
     };
   }, []);
 
-  // Mirror the selection into the URL so /compare?ids=A,B is shareable.
+  // Mirror the selection into the URL so a shared /compare?ids=A,B link stays
+  // human-readable. Contract IDs and window values are already URL-safe, so
+  // they are joined directly: URLSearchParams would percent-encode the comma
+  // separator to %2C, which the page parses identically but reads worse.
   useEffect(() => {
-    const params = new URLSearchParams();
-    if (selectedIds.length > 0) params.set("ids", selectedIds.join(","));
-    if (timeWindow !== "7d") params.set("window", timeWindow);
-    const qs = params.toString();
+    const parts: string[] = [];
+    if (selectedIds.length > 0) parts.push(`ids=${selectedIds.join(",")}`);
+    if (timeWindow !== "7d") parts.push(`window=${timeWindow}`);
+    const qs = parts.join("&");
     router.replace(qs ? `/compare?${qs}` : "/compare", { scroll: false });
   }, [selectedIds, timeWindow, router]);
 

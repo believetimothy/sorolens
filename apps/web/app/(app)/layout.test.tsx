@@ -21,6 +21,13 @@ vi.mock("@/components/NetworkSelector", () => ({
   NetworkSelector: () => <div data-testid="network-selector" />,
 }));
 
+// ThemeToggle calls useTheme(), which requires the ThemeProvider that the root
+// layout supplies in the real app. It is irrelevant to the layout structure
+// this test asserts on, so stub it as the other provider-bound child is.
+vi.mock("@/components/ThemeToggle", () => ({
+  ThemeToggle: () => <div data-testid="theme-toggle" />,
+}));
+
 describe("AppLayout", () => {
   afterEach(() => {
     cleanup();
