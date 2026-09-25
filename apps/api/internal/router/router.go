@@ -14,7 +14,9 @@ import (
 )
 
 // New builds and returns the HTTP router with all middleware and routes wired.
-func New(h *handler.Handler) http.Handler {
+// maxBodyBytes caps the request body size in bytes; values of zero or less
+// disable the limit. Callers normally pass cfg.RequestMaxBodyBytes.
+func New(h *handler.Handler, maxBodyBytes int64) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -23,8 +25,14 @@ func New(h *handler.Handler) http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.CORS)
 	r.Use(middleware.Recoverer(h.Logger))
+	r.Use(middleware.BodyLimit(maxBodyBytes))
 	r.Use(middleware.Logger(h.Logger))
 	r.Use(chiMiddleware.StripSlashes)
+
+	// Emit ETags on cacheable GET/HEAD responses and answer If-None-Match
+	// matches with an empty 304, short-circuiting the body before it
+	// crosses the wire (issue #152).
+	r.Use(middleware.ETag)
 
 	r.Use(middleware.RateLimit(h.RedisClient, h.Store))
 
@@ -85,6 +93,10 @@ func New(h *handler.Handler) http.Handler {
 		// Cross-contract events explorer feed (issue #97).
 		get("/events", h.ListAllEvents)
 
+		// Alert deduplication and grouping engine (issue #269).
+		// GET /api/v1/alerts          — grouped view (default)
+		// GET /api/v1/alerts?flat=true — raw ContractAlert feed
+		get("/alerts", h.ListAlerts)
 		// Search contracts (issue #181)
 		get("/search", h.SearchContracts)
 
@@ -145,6 +157,14 @@ func New(h *handler.Handler) http.Handler {
 		get("/watchdog/contracts/{id}/uptime", h.GetContractUptime)
 		get("/watchdog/contracts/{id}/alerts", h.ListWatchdogAlerts)
 		get("/watchdog/contracts/{id}/uptime", h.GetContractUptime)
+
+		// Monthly SLA and uptime reporting (issue #266). Reports are derived
+		// from the watchdog health checks and alerts already stored, so there
+		// is no new ingestion path. The badge is plain SVG so it can be
+		// embedded in a README without a client library.
+		get("/reports/{contract_id}", h.GetContractReport)
+		get("/reports/{contract_id}/history", h.GetContractReportHistory)
+		get("/reports/{contract_id}/badge.svg", h.GetContractSLABadge)
 
 		// Alert notification subscriptions (issue #127). They hold
 		// integration secrets, so reading them also needs contributor.

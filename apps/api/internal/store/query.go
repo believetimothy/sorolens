@@ -22,6 +22,7 @@ type FullStore interface {
 	HealthScoreStore
 	APIKeyStore
 	AlertSubscriptionStore
+	AlertGroupStore
 	WatchlistStore
 	UserStore
 	PerformanceStore

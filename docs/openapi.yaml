@@ -623,7 +623,7 @@ paths:
             type: string
             enum: [SUCCESS, FAILED, NOT_FOUND]
           description: Invocation status filter.
-        - name: fn
+        - name: function_name
           in: query
           required: false
           schema:
@@ -1485,39 +1485,6 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /api/v1/watchdog/contracts/{id}/uptime:
-    get:
-      tags: [Watchdog]
-      summary: Get a contract's uptime percentage over a window
-      operationId: getContractUptime
-      security:
-        - ApiKeyAuth: [read:watchdog]
-      parameters:
-        - $ref: "#/components/parameters/ContractID"
-        - name: window
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: [24h, 7d, 30d]
-            default: 24h
-          description: Time window over which uptime is computed (default 24h).
-      responses:
-        "200":
-          description: The contract's uptime percentage
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UptimeResult"
-        "422":
-          description: Invalid window parameter.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
   /api/v1/watchdog/contracts/{id}/alerts:
     get:
       tags: [Watchdog]
@@ -1558,6 +1525,34 @@ paths:
                   next_cursor:
                     type: string
                     description: Cursor for the next (older) page; empty when no more pages.
+        "422":
+          $ref: "#/components/responses/InvalidInput"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/watchdog/contracts/{id}/uptime:
+    get:
+      tags: [Watchdog]
+      summary: Get uptime percentage for a monitored contract
+      operationId: getContractUptime
+      security:
+        - ApiKeyAuth: [read:watchdog]
+      parameters:
+        - $ref: "#/components/parameters/ContractID"
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
+          description: Time window over which to compute uptime (default 24h).
+      responses:
+        "200":
+          description: Uptime statistics for the specified window
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UptimeResult"
         "422":
           $ref: "#/components/responses/InvalidInput"
         "500":
@@ -1650,6 +1645,185 @@ paths:
           $ref: "#/components/responses/ForbiddenRole"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/alerts:
+    get:
+      tags: [Watchdog]
+      summary: List alerts, grouped by deduplication key
+      operationId: listAlerts
+      description: Returns the grouped view by default; pass `flat=true` for the raw ContractAlert feed.
+      security:
+        - ApiKeyAuth: [read:watchdog]
+      parameters:
+        - name: flat
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Return the raw alert feed instead of grouped alerts.
+        - name: contract_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter to a single contract ID.
+        - name: severity
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [Info, Warning, Critical]
+        - $ref: "#/components/parameters/NetworkParam"
+        - $ref: "#/components/parameters/Cursor"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "200":
+          description: Alerts, grouped by default and flat when flat=true
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      type: object
+                  alerts:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContractAlert"
+                  next_cursor:
+                    type: string
+        "422":
+          $ref: "#/components/responses/InvalidInput"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/reports/{contract_id}:
+    get:
+      tags: [Reports]
+      summary: Monthly SLA and uptime report for a contract
+      operationId: getContractReport
+      description: Exports one computed report as JSON, CSV or PDF; a single HMAC-SHA256 signature covers every format.
+      security:
+        - ApiKeyAuth: [read:watchdog]
+      parameters:
+        - name: contract_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: month
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Month to report on, formatted YYYY-MM (defaults to the current month).
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [json, csv, pdf]
+            default: json
+      responses:
+        "200":
+          description: The monthly report in the requested format.
+          content:
+            application/json:
+              schema:
+                type: object
+            text/csv:
+              schema:
+                type: string
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "422":
+          $ref: "#/components/responses/InvalidInput"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/reports/{contract_id}/history:
+    get:
+      tags: [Reports]
+      summary: Monthly SLA history for a contract
+      operationId: getContractReportHistory
+      description: One SLA bucket per calendar month, oldest first, for the trend chart.
+      security:
+        - ApiKeyAuth: [read:watchdog]
+      parameters:
+        - name: contract_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: months
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 24
+            default: 12
+      responses:
+        "200":
+          description: One SLA bucket per month, oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [contract_id, months]
+                properties:
+                  contract_id:
+                    type: string
+                  months:
+                    type: array
+                    items:
+                      type: object
+        "422":
+          $ref: "#/components/responses/InvalidInput"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/reports/{contract_id}/badge.svg:
+    get:
+      tags: [Reports]
+      summary: Shields-style SVG badge for a contract's monthly uptime
+      operationId: getContractSLABadge
+      security:
+        - ApiKeyAuth: [read:watchdog]
+      parameters:
+        - name: contract_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: month
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Month to badge, formatted YYYY-MM (defaults to the current month).
+      responses:
+        "200":
+          description: An SVG badge.
+          content:
+            image/svg+xml:
+              schema:
+                type: string
+        "422":
+          $ref: "#/components/responses/InvalidInput"
         "500":
           $ref: "#/components/responses/InternalError"
 

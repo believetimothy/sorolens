@@ -28,6 +28,31 @@ vi.mock("@/components/ThemeToggle", () => ({
   ThemeToggle: () => <div data-testid="theme-toggle" />,
 }));
 
+// The remaining header/offline children reach for browser-only APIs (cmdk's
+// router, Web Push, IndexedDB). They are not what this test asserts on, so they
+// are stubbed out as well.
+vi.mock("@/components/CmdkSearch", () => ({
+  CmdkSearch: () => <div data-testid="cmdk-search" />,
+}));
+
+vi.mock("@/components/PushSubscribeButton", () => ({
+  PushSubscribeButton: () => <div data-testid="push-subscribe-button" />,
+}));
+
+vi.mock("@/components/OfflineAlertBanner", () => ({
+  OfflineAlertBanner: () => <div data-testid="offline-alert-banner" />,
+}));
+
+vi.mock("@/hooks/useOfflineAlertQueue", () => ({
+  useOfflineAlertQueue: () => ({
+    pending: [],
+    isOffline: false,
+    queueAlert: vi.fn(),
+    dismiss: vi.fn(),
+    dismissAll: vi.fn(),
+  }),
+}));
+
 describe("AppLayout", () => {
   afterEach(() => {
     cleanup();
