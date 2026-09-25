@@ -18,6 +18,8 @@ vi.mock("@/lib/api", () => ({
 function invocation(overrides: Partial<Invocation>): Invocation {
   return {
     tx_hash: "a1b2c3",
+    contract_id: "CAVRQGH5C3VRQGH5C3VRQGH5C3VRQGH5C3VRQGH5C3VRQGH5C3VRQGH5C33",
+    network: "testnet",
     ledger: 120_400,
     ledger_closed_at: "2026-07-03T08:00:00Z",
     status: "success",
@@ -96,8 +98,7 @@ describe("getResourceTrend", () => {
   it("aggregates invocations fetched with a 30-day since bound", async () => {
     mockGetContractInvocations.mockResolvedValue({
       invocations: [invocation({ ledger_closed_at: "2026-07-03T08:00:00Z" })],
-      cursor: null,
-      has_more: false,
+      next_cursor: null,
     });
 
     const points = await getResourceTrend("CCONTRACT", 30);
@@ -115,13 +116,11 @@ describe("getResourceTrend", () => {
     mockGetContractInvocations
       .mockResolvedValueOnce({
         invocations: [invocation({ ledger_closed_at: "2026-07-01T08:00:00Z" })],
-        cursor: "next",
-        has_more: true,
+        next_cursor: "next",
       })
       .mockResolvedValueOnce({
         invocations: [invocation({ ledger_closed_at: "2026-07-02T08:00:00Z" })],
-        cursor: null,
-        has_more: false,
+        next_cursor: null,
       });
 
     const points = await getResourceTrend("CCONTRACT", 30);
