@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"time"
@@ -46,6 +47,28 @@ type MockStore struct {
 
 	UpsertContractSpecErr error
 	GetContractSpecErr    error
+	contractVersions   map[string][]ContractVersion
+
+	// Error injection
+	UpsertContractErr           error
+	GetContractErr              error
+	ListContractsErr            error
+	GetGlobalStatsErr           error
+	ListEventsErr               error
+	ListInvocationsErr          error
+	ListStorageErr              error
+	GetContractStatsErr         error
+	RecentEventsErr             error
+	RecentInvocationsErr        error
+	CreateAPIKeyErr             error
+	GetAPIKeyErr                error
+	UpsertUserErr               error
+	GetUserErr                  error
+	ListUpgradesErr             error
+	GetHealthScoreErr           error
+	RecordContractVersionErr    error
+	ListContractVersionsErr     error
+	GetLatestContractVersionErr error
 }
 
 // NewMockStore returns an initialized MockStore.
@@ -60,6 +83,7 @@ func NewMockStore() *MockStore {
 		users:              make(map[string]User),
 		indexerCursors:     make(map[string]uint32),
 		contractSpecs:      make(map[string]ContractSpec),
+		contractVersions:   make(map[string][]ContractVersion),
 	}
 }
 
@@ -215,6 +239,9 @@ func (m *MockStore) ListEvents(_ context.Context, contractID, cursor string, lim
 		if f.Type != "" && e.Type != f.Type {
 			continue
 		}
+		if f.Topic != "" && !topicDecodedContains(e.TopicDecoded, f.Topic) {
+			continue
+		}
 		out = append(out, e)
 		if len(out) > limit {
 			break
@@ -226,6 +253,29 @@ func (m *MockStore) ListEvents(_ context.Context, contractID, cursor string, lim
 		out = out[:limit]
 	}
 	return out, nextCursor, nil
+}
+
+// topicDecodedContains reports whether a decoded topic list contains the value
+// encoded by a ?topic= filter. Comparison goes through JSON so an int in test
+// data matches the float64 produced by decoding a numeric filter, mirroring the
+// containment semantics of postgresStore.ListEvents.
+func topicDecodedContains(topics []any, topic string) bool {
+	want := topicFilterValue(topic)
+	for _, t := range topics {
+		if jsonValueEqual(t, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func jsonValueEqual(a, b any) bool {
+	ab, errA := json.Marshal(a)
+	bb, errB := json.Marshal(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return string(ab) == string(bb)
 }
 
 func (m *MockStore) ListInvocations(_ context.Context, contractID, cursor string, limit int, f InvocationFilters) ([]Invocation, string, error) {
@@ -428,6 +478,24 @@ func (m *MockStore) RecentEvents(_ context.Context, contractID string, limit int
 	return out, nil
 }
 
+// RecentInvocations returns the newest invocations for a contract, mirroring
+// the postgres query's ledger/tx-hash descending order.
+func (m *MockStore) RecentInvocations(_ context.Context, contractID string, limit int) ([]Invocation, error) {
+	if m.RecentInvocationsErr != nil {
+		return nil, m.RecentInvocationsErr
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	var out []Invocation
+	for i := len(m.invocations) - 1; i >= 0 && len(out) < limit; i-- {
+		if m.invocations[i].ContractID == contractID {
+			out = append(out, m.invocations[i])
+		}
+	}
+	return out, nil
+}
+
 // ---- store.QueryStore snapshot helpers --------------------------------------
 
 // ContractFirstLedger returns the earliest ledger with indexed data for the
@@ -582,6 +650,7 @@ func (m *MockStore) TouchAPIKey(_ context.Context, id string) error {
 // ---- store.AlertSubscriptionStore -------------------------------------------
 
 func (m *MockStore) Create(_ context.Context, s AlertSubscription) error {
+	s.ChannelType = channelOrDefault(s.ChannelType)
 	m.alertSubscriptions = append(m.alertSubscriptions, s)
 	return nil
 }
@@ -602,6 +671,9 @@ func (m *MockStore) Delete(_ context.Context, id string) error {
 		if s.ID != id {
 			filtered = append(filtered, s)
 		}
+	}
+	if len(filtered) == len(m.alertSubscriptions) {
+		return ErrNotFound
 	}
 	m.alertSubscriptions = filtered
 	return nil
@@ -728,3 +800,56 @@ func (m *MockStore) ComputeAndStoreBaselines(ctx context.Context, snapshotDate t
 func (m *MockStore) CheckAndEmitRegressions(ctx context.Context, snapshotDate time.Time) (int, error) {
 	return 0, nil
 }
+
+// ---- contract versions ---------------------------------------------------
+
+func (m *MockStore) RecordContractVersion(_ context.Context, v ContractVersion) error {
+	if m.RecordContractVersionErr != nil {
+		return m.RecordContractVersionErr
+	}
+	if v.RecordedAt.IsZero() {
+		v.RecordedAt = time.Now()
+	}
+	existing := m.contractVersions[v.ContractID]
+	for _, prev := range existing {
+		if prev.WasmHash == v.WasmHash {
+			return nil // idempotent ON CONFLICT DO NOTHING
+		}
+	}
+	m.contractVersions[v.ContractID] = append(existing, v)
+	return nil
+}
+
+func (m *MockStore) ListContractVersions(_ context.Context, contractID string) ([]ContractVersion, error) {
+	if m.ListContractVersionsErr != nil {
+		return nil, m.ListContractVersionsErr
+	}
+	versions, ok := m.contractVersions[contractID]
+	if !ok {
+		return nil, nil
+	}
+	out := make([]ContractVersion, len(versions))
+	copy(out, versions)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].FirstSeenLedger < out[j].FirstSeenLedger
+	})
+	return out, nil
+}
+
+func (m *MockStore) GetLatestContractVersion(_ context.Context, contractID string) (ContractVersion, error) {
+	if m.GetLatestContractVersionErr != nil {
+		return ContractVersion{}, m.GetLatestContractVersionErr
+	}
+	versions, ok := m.contractVersions[contractID]
+	if !ok || len(versions) == 0 {
+		return ContractVersion{}, ErrNotFound
+	}
+	latest := versions[0]
+	for _, v := range versions[1:] {
+		if v.FirstSeenLedger > latest.FirstSeenLedger {
+			latest = v
+		}
+	}
+	return latest, nil
+}
+
