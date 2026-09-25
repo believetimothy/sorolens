@@ -15,6 +15,7 @@ import (
 
 	"github.com/sorolens/sorolens/services/indexer/internal/anomaly"
 	"github.com/sorolens/sorolens/services/indexer/internal/healthscore"
+	"github.com/sorolens/sorolens/services/indexer/internal/metrics"
 	"github.com/sorolens/sorolens/services/indexer/internal/partition"
 	"github.com/sorolens/sorolens/services/indexer/internal/wasm"
 )
@@ -106,6 +107,7 @@ func (p *Poller) runOnce(ctx context.Context) error {
 
 	err := p.processAll(ctx)
 	elapsed := time.Since(start)
+	metrics.ObserveRunDuration("once", elapsed.Seconds())
 
 	if ctx.Err() == context.DeadlineExceeded {
 		p.log.Warn("indexer run exceeded max-duration, exiting cleanly",
@@ -120,9 +122,11 @@ func (p *Poller) runOnce(ctx context.Context) error {
 // runContinuous loops until ctx is cancelled, sleeping PollInterval between passes.
 func (p *Poller) runContinuous(ctx context.Context) error {
 	for {
+		passStart := time.Now()
 		if err := p.processAll(ctx); err != nil {
 			p.log.Error("indexer pass error", "err", err)
 		}
+		metrics.ObserveRunDuration("continuous", time.Since(passStart).Seconds())
 		select {
 		case <-ctx.Done():
 			p.log.Info("indexer shutting down")
@@ -433,6 +437,7 @@ func (p *Poller) processContract(ctx context.Context, contract Contract) error {
 		)
 	}
 
+
 	latest, err := rpc.GetLatestLedger(ctx)
 	if err != nil {
 		return fmt.Errorf("get latest ledger: %w", err)
@@ -499,6 +504,11 @@ func (p *Poller) processContract(ctx context.Context, contract Contract) error {
 	if err := p.store.BatchInsertWithCursor(ctx, network, endLedger, events, invocations, newState); err != nil {
 		return fmt.Errorf("batch insert with cursor: %w", err)
 	}
+
+	// Only count work that was actually committed: a failed insert returns
+	// above, so these series always describe durable progress.
+	metrics.AddEventsProcessed(network, len(events))
+	metrics.ObserveLedgerLag(network, int64(latest.Sequence)-int64(endLedger))
 
 	log.Info("contract indexed",
 		"events", len(events),

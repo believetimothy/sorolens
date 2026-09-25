@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sorolens/sorolens/services/indexer/internal/metrics"
 	"github.com/sorolens/sorolens/services/indexer/internal/poller"
 	"github.com/sorolens/sorolens/services/indexer/internal/watchdog"
 )
@@ -85,6 +87,26 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Optional metrics listener. Setting METRICS_PORT exposes GET /metrics for
+	// Prometheus scraping; it is most useful with --mode continuous, where the
+	// process is long-lived enough to be scraped repeatedly.
+	var metricsSrv *http.Server
+	if metricsPort := os.Getenv("METRICS_PORT"); metricsPort != "" {
+		metricsSrv = &http.Server{
+			Addr:         ":" + metricsPort,
+			Handler:      metrics.NewAdminMux(),
+			ReadTimeout:  15 * time.Second,
+			WriteTimeout: 30 * time.Second,
+			IdleTimeout:  60 * time.Second,
+		}
+		go func() {
+			log.Info("sorolens/indexer metrics listening", "port", metricsPort)
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("metrics listen", "err", err)
+			}
+		}()
+	}
+
 	// Start nightly performance job
 	go func() {
 		type perfStore interface {
@@ -115,7 +137,13 @@ func main() {
 	}()
 
 	log.Info("sorolens/indexer starting", "mode", *mode)
-	if err := p.Run(ctx, *mode); err != nil {
+	err := p.Run(ctx, *mode)
+
+	if metricsSrv != nil {
+		_ = metricsSrv.Close()
+	}
+
+	if err != nil {
 		log.Error("indexer error", "err", err)
 		os.Exit(1)
 	}

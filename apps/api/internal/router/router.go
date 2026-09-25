@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/sorolens/sorolens/apps/api/internal/handler"
+	"github.com/sorolens/sorolens/apps/api/internal/metrics"
 	"github.com/sorolens/sorolens/apps/api/internal/middleware"
 )
 
@@ -21,8 +22,14 @@ func New(h *handler.Handler) http.Handler {
 	r.Use(middleware.Recoverer(h.Logger))
 	r.Use(middleware.Logger(h.Logger))
 	r.Use(chiMiddleware.StripSlashes)
+	r.Use(middleware.Metrics)
 
 	r.Use(middleware.RateLimit(h.RedisClient, h.Store))
+
+	// Prometheus scrape endpoint. It sits outside /api/v1 so it needs no API
+	// key, and the rate limiter skips it explicitly (see middleware.RateLimit)
+	// so a scrape is never throttled.
+	r.Method(http.MethodGet, "/metrics", metrics.Handler)
 
 	// Health (not rate-limited)
 	r.Get("/health", h.Health)
