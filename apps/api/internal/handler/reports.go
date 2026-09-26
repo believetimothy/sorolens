@@ -250,8 +250,8 @@ func reportFilename(contractID, month, ext string) string {
 	// Contract ids are 56-char strkeys; the tail is enough to identify one and
 	// keeps the filename usable.
 	short := contractID
-	if len(short) > 12 {
-		short = short[:12]
+	if len(short) > 11 {
+		short = short[:11]
 	}
 	return fmt.Sprintf("sorolens-sla-%s-%s.%s", short, month, ext)
 }

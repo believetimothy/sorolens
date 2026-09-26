@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -26,10 +27,13 @@ type MockStore struct {
 	alertSubscriptions []AlertSubscription
 	users              map[string]User
 	healthScores       map[string]ContractHealthScore
+	failedEvents       map[int64]FailedEvent
+	failedEventSeq     int64
 	indexerCursors     map[string]uint32
 	contractSpecs      map[string]ContractSpec
 	contractVersions   map[string][]ContractVersion
 	alertGroups        []AlertGroup
+	labels             []Label
 
 	// Error injection
 	UpsertContractErr           error
@@ -53,6 +57,34 @@ type MockStore struct {
 	GetLatestContractVersionErr error
 	UpsertContractSpecErr       error
 	GetContractSpecErr          error
+	InsertFailedEventErr        error
+	ListFailedEventsErr         error
+	GetFailedEventErr           error
+	DeleteFailedEventErr        error
+}
+
+func (m *MockStore) UpsertLabel(_ context.Context, label Label) error {
+	for i, existing := range m.labels {
+		if existing.Label == label.Label && (label.Public || existing.WorkspaceID == label.WorkspaceID) { m.labels[i] = label; return nil }
+	}
+	m.labels = append(m.labels, label)
+	return nil
+}
+
+func (m *MockStore) ListLabels(_ context.Context, workspaceID, query string) ([]Label, error) {
+	query = strings.ToLower(query)
+	var out []Label
+	for _, label := range m.labels {
+		if !label.Public && label.WorkspaceID != workspaceID { continue }
+		if query == "" || strings.Contains(strings.ToLower(label.Label), query) || strings.Contains(strings.ToLower(label.Value), query) { out = append(out, label) }
+	}
+	return out, nil
+}
+
+func (m *MockStore) ResolveLabel(_ context.Context, workspaceID, query string) (Label, error) {
+	for _, label := range m.labels { if label.Public && strings.EqualFold(label.Label, query) { return label, nil } }
+	for _, label := range m.labels { if !label.Public && label.WorkspaceID == workspaceID && strings.EqualFold(label.Label, query) { return label, nil } }
+	return Label{}, ErrNotFound
 }
 
 // NewMockStore returns an initialized MockStore.
@@ -181,7 +213,10 @@ func (m *MockStore) SetIndexerCursor(_ context.Context, network string, ledger u
 	if m.indexerCursors == nil {
 		m.indexerCursors = make(map[string]uint32)
 	}
-	m.indexerCursors[networkOrDefault(network)] = ledger
+	key := networkOrDefault(network)
+	if ledger > m.indexerCursors[key] {
+		m.indexerCursors[key] = ledger
+	}
 	return nil
 }
 
@@ -260,6 +295,38 @@ func jsonValueEqual(a, b any) bool {
 		return false
 	}
 	return string(ab) == string(bb)
+}
+
+func (m *MockStore) StreamEventsCSV(_ context.Context, contractID string, f EventFilters, w io.Writer) (err error) {
+	if m.ListEventsErr != nil {
+		return m.ListEventsErr
+	}
+	csvWriter, err := newEventsCSVWriter(w)
+	if err != nil {
+		return err
+	}
+	defer flushEventsCSV(csvWriter, &err)
+
+	// Copy before sorting: m.events is shared with every other reader, and the
+	// export order must match the Postgres query's ORDER BY rather than the
+	// order events happened to be inserted in.
+	matched := make([]Event, 0, len(m.events))
+	for _, e := range m.events {
+		if e.ContractID == contractID && matchesEventFilters(e, f) {
+			matched = append(matched, e)
+		}
+	}
+	sort.SliceStable(matched, func(i, j int) bool { return lessEventOrder(matched[i], matched[j]) })
+
+	var row []string
+	for _, e := range matched {
+		row = eventCSVRecord(e, eventJSON(e.TopicXDR), eventJSON(e.TopicDecoded), eventJSON(e.ValueDecoded))
+		if err := csvWriter.Write(row); err != nil {
+			return err
+		}
+	}
+	// flushEventsCSV reports any buffered or flush-time write failure.
+	return nil
 }
 
 func (m *MockStore) ListInvocations(_ context.Context, contractID, cursor string, limit int, f InvocationFilters) ([]Invocation, string, error) {

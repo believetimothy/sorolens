@@ -135,7 +135,7 @@ func TestRenderReportCSVEscapesContractIDThatLooksNumeric(t *testing.T) {
 }
 
 func TestRenderReportPDFHasValidStructure(t *testing.T) {
-	body, err := renderReportPDF(sampleReport(), "deadbeef")
+	body, err := renderReportPDF(sampleReport(), strings.Repeat("deadbeef", 8))
 	if err != nil {
 		t.Fatalf("renderReportPDF: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestRenderSLABadgeIsWellFormedXML(t *testing.T) {
 
 func TestReportFilenameIsSanitised(t *testing.T) {
 	got := reportFilename("CABCDEFGHIJKLMNOPQRSTUVWXYZ234567", "2026-02", "pdf")
-	if got != "sorolens-sla-CABCDEFGHIJK-2026-02.pdf" {
+	if got != "sorolens-sla-CABCDEFGHIJ-2026-02.pdf" {
 		t.Fatalf("filename = %q", got)
 	}
 }

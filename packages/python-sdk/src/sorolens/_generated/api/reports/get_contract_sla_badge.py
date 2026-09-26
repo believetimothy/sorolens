@@ -46,6 +46,11 @@ def _parse_response(
 
         return response_500
 
+    if response.status_code == 501:
+        response_501 = Error.from_dict(response.json())
+
+        return response_501
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -66,10 +71,13 @@ def _build_response(
 def sync_detailed(
     contract_id: str,
     *,
-    client: AuthenticatedClient,
+    client: AuthenticatedClient | Client,
     month: str | Unset = UNSET,
 ) -> Response[Error]:
-    """Shields-style SVG badge for a contract's monthly uptime
+    """Get an SLA badge SVG for a contract
+
+     Shields.io-style SVG badge showing a month's uptime, suitable for
+    embedding in a README.
 
     Args:
         contract_id (str):
@@ -98,10 +106,13 @@ def sync_detailed(
 def sync(
     contract_id: str,
     *,
-    client: AuthenticatedClient,
+    client: AuthenticatedClient | Client,
     month: str | Unset = UNSET,
 ) -> Error | None:
-    """Shields-style SVG badge for a contract's monthly uptime
+    """Get an SLA badge SVG for a contract
+
+     Shields.io-style SVG badge showing a month's uptime, suitable for
+    embedding in a README.
 
     Args:
         contract_id (str):
@@ -125,10 +136,13 @@ def sync(
 async def asyncio_detailed(
     contract_id: str,
     *,
-    client: AuthenticatedClient,
+    client: AuthenticatedClient | Client,
     month: str | Unset = UNSET,
 ) -> Response[Error]:
-    """Shields-style SVG badge for a contract's monthly uptime
+    """Get an SLA badge SVG for a contract
+
+     Shields.io-style SVG badge showing a month's uptime, suitable for
+    embedding in a README.
 
     Args:
         contract_id (str):
@@ -155,10 +169,13 @@ async def asyncio_detailed(
 async def asyncio(
     contract_id: str,
     *,
-    client: AuthenticatedClient,
+    client: AuthenticatedClient | Client,
     month: str | Unset = UNSET,
 ) -> Error | None:
-    """Shields-style SVG badge for a contract's monthly uptime
+    """Get an SLA badge SVG for a contract
+
+     Shields.io-style SVG badge showing a month's uptime, suitable for
+    embedding in a README.
 
     Args:
         contract_id (str):

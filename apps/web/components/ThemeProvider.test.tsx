@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider, useTheme } from "./ThemeProvider";
@@ -37,7 +43,7 @@ function mount() {
       <ThemeProvider>
         <Picker />
       </ThemeProvider>
-    </StrictMode>,
+    </StrictMode>
   );
 }
 
@@ -60,7 +66,7 @@ describe("ThemeProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "dark" }));
 
     await waitFor(() =>
-      expect(document.documentElement.getAttribute("data-theme")).toBe("dark"),
+      expect(document.documentElement.getAttribute("data-theme")).toBe("dark")
     );
     expect(localStorage.getItem("theme")).toBe("dark");
   });
@@ -68,16 +74,36 @@ describe("ThemeProvider", () => {
   it("keeps the stored theme across a remount (reload)", async () => {
     const first = mount();
     fireEvent.click(screen.getByRole("button", { name: "dark" }));
-    await waitFor(() =>
-      expect(localStorage.getItem("theme")).toBe("dark"),
-    );
+    await waitFor(() => expect(localStorage.getItem("theme")).toBe("dark"));
     first.unmount();
 
     mount();
 
     await waitFor(() =>
-      expect(document.documentElement.getAttribute("data-theme")).toBe("dark"),
+      expect(document.documentElement.getAttribute("data-theme")).toBe("dark")
     );
+    expect(localStorage.getItem("theme")).toBe("dark");
+  });
+
+  it("applies a stored dark theme on the first render, with no system pass", async () => {
+    localStorage.setItem("theme", "dark");
+    // jsdom reports `prefers-color-scheme: dark` as false, so a stray
+    // "system" apply is observable as a flip back to light.
+    const observed: (string | null)[] = [];
+    const observer = new MutationObserver(() =>
+      observed.push(document.documentElement.getAttribute("data-theme"))
+    );
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+
+    mount();
+    // MutationObserver callbacks are microtasks; let them drain.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    observer.disconnect();
+
+    expect(observed).toEqual(["dark"]);
     expect(localStorage.getItem("theme")).toBe("dark");
   });
 });

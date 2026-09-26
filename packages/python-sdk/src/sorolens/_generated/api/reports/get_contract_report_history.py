@@ -16,7 +16,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     contract_id: str,
     *,
-    months: int | Unset = 12,
+    months: int | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -54,6 +54,11 @@ def _parse_response(
 
         return response_500
 
+    if response.status_code == 501:
+        response_501 = Error.from_dict(response.json())
+
+        return response_501
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -74,16 +79,14 @@ def _build_response(
 def sync_detailed(
     contract_id: str,
     *,
-    client: AuthenticatedClient,
-    months: int | Unset = 12,
+    client: AuthenticatedClient | Client,
+    months: int | Unset = UNSET,
 ) -> Response[Error | GetContractReportHistoryResponse200]:
-    """Monthly SLA history for a contract
-
-     One SLA bucket per calendar month, oldest first, for the trend chart.
+    """Get a contract's SLA history across months
 
     Args:
         contract_id (str):
-        months (int | Unset):  Default: 12.
+        months (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -108,16 +111,14 @@ def sync_detailed(
 def sync(
     contract_id: str,
     *,
-    client: AuthenticatedClient,
-    months: int | Unset = 12,
+    client: AuthenticatedClient | Client,
+    months: int | Unset = UNSET,
 ) -> Error | GetContractReportHistoryResponse200 | None:
-    """Monthly SLA history for a contract
-
-     One SLA bucket per calendar month, oldest first, for the trend chart.
+    """Get a contract's SLA history across months
 
     Args:
         contract_id (str):
-        months (int | Unset):  Default: 12.
+        months (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,16 +138,14 @@ def sync(
 async def asyncio_detailed(
     contract_id: str,
     *,
-    client: AuthenticatedClient,
-    months: int | Unset = 12,
+    client: AuthenticatedClient | Client,
+    months: int | Unset = UNSET,
 ) -> Response[Error | GetContractReportHistoryResponse200]:
-    """Monthly SLA history for a contract
-
-     One SLA bucket per calendar month, oldest first, for the trend chart.
+    """Get a contract's SLA history across months
 
     Args:
         contract_id (str):
-        months (int | Unset):  Default: 12.
+        months (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,16 +168,14 @@ async def asyncio_detailed(
 async def asyncio(
     contract_id: str,
     *,
-    client: AuthenticatedClient,
-    months: int | Unset = 12,
+    client: AuthenticatedClient | Client,
+    months: int | Unset = UNSET,
 ) -> Error | GetContractReportHistoryResponse200 | None:
-    """Monthly SLA history for a contract
-
-     One SLA bucket per calendar month, oldest first, for the trend chart.
+    """Get a contract's SLA history across months
 
     Args:
         contract_id (str):
-        months (int | Unset):  Default: 12.
+        months (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

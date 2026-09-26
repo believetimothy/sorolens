@@ -11,31 +11,40 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
+const THEME_KEY = "theme";
+
+/**
+ * Reads the stored theme. Called during the first client render, so the very
+ * first paint already matches the inline script in the root layout instead of
+ * starting from "system" and correcting itself a render later.
+ */
+function readStoredTheme(): Theme {
+  // Server render and any environment without storage fall back to "system".
+  if (typeof window === "undefined") return "system";
+  try {
+    const stored = window.localStorage.getItem(THEME_KEY);
+    if (stored === "light" || stored === "dark" || stored === "system") {
+      return stored;
+    }
+  } catch {
+    // Storage can be unavailable (private mode, blocked cookies).
+  }
+  return "system";
+}
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>("system");
-  // Gates the apply/persist effect until the stored theme has been read.
-  const [restored, setRestored] = useState(false);
+  const [theme, setTheme] = useState<Theme>(readStoredTheme);
+  // Guards the localStorage write below until mount has settled. The read
+  // happens during the first render, so nothing is pending at this point, but
+  // the write must still not fire on mount: it would turn a user who has
+  // never picked a theme into an explicit "system" preference.
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    // Read the stored theme once, before anything is allowed to write. StrictMode
-    // mounts effects twice in development; persisting the "system" default here
-    // would overwrite the stored value, and the second pass would then read that
-    // default back — losing the user's choice on every reload.
-    let savedTheme: Theme | null = null;
-    try {
-      savedTheme = localStorage.getItem("theme") as Theme | null;
-    } catch {
-      // Storage can be unavailable (private mode); the system default stands.
-    }
-    if (savedTheme) {
-      setTheme(savedTheme);
-    }
-    setRestored(true);
+    setHydrated(true);
   }, []);
 
   useEffect(() => {
-    if (!restored) return;
-
     const applyTheme = (currentTheme: Theme) => {
       const isDark =
         currentTheme === "dark" ||
@@ -50,7 +59,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     };
 
     applyTheme(theme);
-    localStorage.setItem("theme", theme);
+    if (hydrated) {
+      try {
+        window.localStorage.setItem(THEME_KEY, theme);
+      } catch {
+        // A failed write only costs persistence; the theme still applies.
+      }
+    }
 
     // Listen for system theme changes if set to system
     if (theme === "system") {
@@ -59,7 +74,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       mediaQuery.addEventListener("change", handleChange);
       return () => mediaQuery.removeEventListener("change", handleChange);
     }
-  }, [theme, restored]);
+  }, [theme, hydrated]);
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme }}>

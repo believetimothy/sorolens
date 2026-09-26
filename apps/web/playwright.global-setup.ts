@@ -5,7 +5,9 @@ export default async function globalSetup(): Promise<void> {
   const paths = [
     "/",
     "/contracts",
+    "/contracts/new",
     "/contracts/CAVRQGH5C3VRQGH5C3VRQGH5C3VRQGH5C3VRQGH5C3VRQGH5C3VRQGH5C33",
+    "/live",
     "/watchdog",
     "/watchdog/CAVRQGH5C3VRQGH5C3VRQGH5C3VRQGH5C3VRQGH5C3VRQGH5C3VRQGH5C33",
     "/playground",
@@ -35,7 +37,9 @@ export default async function globalSetup(): Promise<void> {
     }
 
     if (!warmed) {
-      throw new Error(`[e2e warmup] failed for ${path} after 3 attempts: ${lastFailure}`);
+      throw new Error(
+        `[e2e warmup] failed for ${path} after 3 attempts: ${lastFailure}`
+      );
     }
   }
 }

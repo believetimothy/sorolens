@@ -10,10 +10,8 @@ from typing_extensions import Self
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.alert_group import AlertGroup
     from ..models.contract_alert import ContractAlert
-    from ..models.list_alerts_response_200_groups_item import (
-        ListAlertsResponse200GroupsItem,
-    )
 
 
 T = TypeVar("T", bound="ListAlertsResponse200")
@@ -23,17 +21,19 @@ T = TypeVar("T", bound="ListAlertsResponse200")
 class ListAlertsResponse200:
     """
     Attributes:
-        groups (list[ListAlertsResponse200GroupsItem] | Unset):
-        alerts (list[ContractAlert] | Unset):
-        next_cursor (str | Unset):
+        next_cursor (str):
+        groups (list[AlertGroup] | Unset): Present when flat is not set.
+        alerts (list[ContractAlert] | Unset): Present when flat=true.
     """
 
-    groups: list[ListAlertsResponse200GroupsItem] | Unset = UNSET
+    next_cursor: str
+    groups: list[AlertGroup] | Unset = UNSET
     alerts: list[ContractAlert] | Unset = UNSET
-    next_cursor: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        next_cursor = self.next_cursor
+
         groups: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.groups, Unset):
             groups = []
@@ -48,36 +48,34 @@ class ListAlertsResponse200:
                 alerts_item = alerts_item_data.to_dict()
                 alerts.append(alerts_item)
 
-        next_cursor = self.next_cursor
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({})
+        field_dict.update(
+            {
+                "next_cursor": next_cursor,
+            }
+        )
         if groups is not UNSET:
             field_dict["groups"] = groups
         if alerts is not UNSET:
             field_dict["alerts"] = alerts
-        if next_cursor is not UNSET:
-            field_dict["next_cursor"] = next_cursor
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.alert_group import AlertGroup
         from ..models.contract_alert import ContractAlert
-        from ..models.list_alerts_response_200_groups_item import (
-            ListAlertsResponse200GroupsItem,
-        )
 
         d = dict(src_dict)
+        next_cursor = d.pop("next_cursor")
+
         _groups = d.pop("groups", UNSET)
-        groups: list[ListAlertsResponse200GroupsItem] | Unset = UNSET
+        groups: list[AlertGroup] | Unset = UNSET
         if _groups is not UNSET:
             groups = []
             for groups_item_data in _groups:
-                groups_item = ListAlertsResponse200GroupsItem.from_dict(
-                    groups_item_data
-                )
+                groups_item = AlertGroup.from_dict(groups_item_data)
 
                 groups.append(groups_item)
 
@@ -90,12 +88,10 @@ class ListAlertsResponse200:
 
                 alerts.append(alerts_item)
 
-        next_cursor = d.pop("next_cursor", UNSET)
-
         list_alerts_response_200 = cls(
+            next_cursor=next_cursor,
             groups=groups,
             alerts=alerts,
-            next_cursor=next_cursor,
         )
 
         list_alerts_response_200.additional_properties = d

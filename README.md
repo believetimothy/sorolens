@@ -23,6 +23,7 @@ Soroban's public RPC retains events for 24 hours and transaction data for up to 
 - **Snapshot / replay**: `GET /api/v1/contracts/:id/snapshot?ledger=N` replays a contract's storage state and last known event as of any ledger, with a ledger scrubber on the contract page for time-travel debugging.
 - **Scoped API keys**: per-key permissions (`read:contracts`, `write:contracts`, `read:watchdog`, `admin:*`) enforced by route metadata, so a monitoring bot can hold a read-only watchdog key.
 - **API playground**: an interactive `/playground` page to explore every endpoint, send requests, and copy them as curl.
+- **Build introspection**: `GET /api/version` returns the running API's `version`, `git_sha`, and `built_at` (injected at build time via `-ldflags`, falling back to `dev` locally). It is unauthenticated and does no database or Redis work, so deploy checks and uptime monitors can poll it cheaply.
 
 ## Quickstart
 ### Prerequisites
@@ -44,6 +45,10 @@ go run ./cmd/sorolens track CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHG
 go run ./cmd/sorolens index --once
 ```
 The dashboard is at `http://localhost:3000` after `pnpm dev` in `apps/web`.
+
+The indexer processes contracts concurrently. Set `INDEXER_WORKERS` to tune
+the worker count; it defaults to `GOMAXPROCS`. Each contract is handled by one
+worker at a time, preserving that contract's processing order.
 ---
 ## How to contribute
 
@@ -173,6 +178,9 @@ sorolens/
   contracts/
     counter/      Rust Soroban fixture contract
     watchdog/     Rust Soroban watchdog contract (on-chain health tracking)
+  deploy/
+    terraform/    Self-hosting Terraform modules (AWS; see docs/self-hosting/aws.md)
+    pulumi/       Self-hosting Pulumi (TypeScript) components, mirroring terraform/
   docs/
     screenshots/  Screenshot placeholders
 ```

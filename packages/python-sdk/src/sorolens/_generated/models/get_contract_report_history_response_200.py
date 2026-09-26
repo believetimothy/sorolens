@@ -8,9 +8,7 @@ from attrs import field as _attrs_field
 from typing_extensions import Self
 
 if TYPE_CHECKING:
-    from ..models.get_contract_report_history_response_200_months_item import (
-        GetContractReportHistoryResponse200MonthsItem,
-    )
+    from ..models.monthly_sla import MonthlySLA
 
 
 T = TypeVar("T", bound="GetContractReportHistoryResponse200")
@@ -21,11 +19,11 @@ class GetContractReportHistoryResponse200:
     """
     Attributes:
         contract_id (str):
-        months (list[GetContractReportHistoryResponse200MonthsItem]):
+        months (list[MonthlySLA]):
     """
 
     contract_id: str
-    months: list[GetContractReportHistoryResponse200MonthsItem]
+    months: list[MonthlySLA]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,9 +47,7 @@ class GetContractReportHistoryResponse200:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.get_contract_report_history_response_200_months_item import (
-            GetContractReportHistoryResponse200MonthsItem,
-        )
+        from ..models.monthly_sla import MonthlySLA
 
         d = dict(src_dict)
         contract_id = d.pop("contract_id")
@@ -59,9 +55,7 @@ class GetContractReportHistoryResponse200:
         months = []
         _months = d.pop("months")
         for months_item_data in _months:
-            months_item = GetContractReportHistoryResponse200MonthsItem.from_dict(
-                months_item_data
-            )
+            months_item = MonthlySLA.from_dict(months_item_data)
 
             months.append(months_item)
 

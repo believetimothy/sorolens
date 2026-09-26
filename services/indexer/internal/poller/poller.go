@@ -9,9 +9,11 @@ package poller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sort"
+	"runtime"
+	"sync"
 	"time"
 
 	"github.com/sorolens/sorolens/services/indexer/internal/anomaly"
@@ -22,17 +24,16 @@ import (
 )
 
 const (
+	// maxEventRetries is how many times a single event is retried before
+	// it is parked in the dead-letter queue (issue #202).
+	maxEventRetries = 3
+
 	// lockTTL is the Redis advisory lock lifetime per contract.
 	// Set to twice the expected maximum per-contract processing time.
 	lockTTL = 60 * time.Second
 
 	// lockKeyPrefix is the Redis key prefix for per-contract indexer locks.
 	lockKeyPrefix = "sorolens:lock:indexer:"
-
-	// defaultNetworkLabel is the value used for the "network" metric label
-	// when the poller is wired with the single unnamed RPC client (no
-	// per-network SOROBAN_RPC_URL_* variables configured), issue #198.
-	defaultNetworkLabel = "default"
 
 	// newContractBackfillWindow is how many ledgers back to start a backfill
 	// for a contract with no prior sync state. At ~5s per ledger this is
@@ -42,6 +43,9 @@ const (
 
 // Config holds runtime parameters for the Poller.
 type Config struct {
+	// Workers is the maximum number of contracts processed concurrently. Values
+	// less than one default to GOMAXPROCS.
+	Workers int
 	// LedgerWindow is the maximum number of ledgers to request per getEvents
 	// call. Matches INDEXER_LEDGER_WINDOW from the API config.
 	LedgerWindow uint32
@@ -64,7 +68,6 @@ type Config struct {
 
 // Poller fetches and persists events and invocations for all tracked contracts.
 type Poller struct {
-	rpcClient  RPCClient
 	rpcClients map[string]RPCClient
 	store      Store
 	redis      RedisClient
@@ -75,33 +78,6 @@ type Poller struct {
 	metrics *metrics.Recorder
 }
 
-// New returns a Poller wired with the given dependencies.
-// It preserves the existing single-client behavior by using the provided RPC
-// client for all contracts when no network-specific map is needed.
-func New(rpc RPCClient, store Store, redis RedisClient, cfg Config, log *slog.Logger) *Poller {
-	p := NewWithRPCClients(map[string]RPCClient{"": rpc}, store, redis, cfg, log)
-	p.rpcClient = rpc
-	return p
-}
-
-// NewWithRPCClients returns a Poller that routes each contract to the RPC
-// client matching its network. Contracts with an unconfigured network are
-// skipped with a warning.
-func NewWithRPCClients(rpcClients map[string]RPCClient, store Store, redis RedisClient, cfg Config, log *slog.Logger) *Poller {
-	var defaultClient RPCClient
-	if rpcClients != nil {
-		if c, ok := rpcClients[""]; ok {
-			defaultClient = c
-		} else if len(rpcClients) == 1 {
-			for _, c := range rpcClients {
-				defaultClient = c
-				break
-			}
-		}
-	}
-	return &Poller{rpcClient: defaultClient, rpcClients: rpcClients, store: store, redis: redis, cfg: cfg, log: log}
-}
-
 // SetMetrics attaches the Prometheus recorder the poller updates on every
 // pass (issue #198). It must be called before Run; when it is never called
 // metric recording is skipped, so existing callers are unaffected.
@@ -109,10 +85,24 @@ func (p *Poller) SetMetrics(r *metrics.Recorder) {
 	p.metrics = r
 }
 
+// New returns a Poller wired with the given dependencies.
+// It preserves the existing single-client behavior by using the provided RPC
+// client for all contracts when no network-specific map is needed.
+func New(rpc RPCClient, store Store, redis RedisClient, cfg Config, log *slog.Logger) *Poller {
+	return NewWithRPCClients(map[string]RPCClient{"": rpc}, store, redis, cfg, log)
+}
+
+// NewWithRPCClients returns a Poller that routes each contract to the RPC
+// client matching its network. Contracts with an unconfigured network are
+// skipped with a warning.
+func NewWithRPCClients(rpcClients map[string]RPCClient, store Store, redis RedisClient, cfg Config, log *slog.Logger) *Poller {
+	return &Poller{rpcClients: rpcClients, store: store, redis: redis, cfg: cfg, log: log}
+}
+
 // Run starts the poller in the given mode.
 // mode must be "once" or "continuous".
 // The context controls graceful shutdown: when ctx is cancelled the poller
-// finishes the current contract then returns.
+// finishes in-flight contracts, skips queued contracts, then returns.
 func (p *Poller) Run(ctx context.Context, mode string) error {
 	switch mode {
 	case "once":
@@ -137,6 +127,7 @@ func (p *Poller) runOnce(ctx context.Context) error {
 
 	err := p.processAll(ctx)
 	elapsed := time.Since(start)
+	p.metrics.ObserveRunDuration("once", elapsed.Seconds())
 
 	if ctx.Err() == context.DeadlineExceeded {
 		p.log.Warn("indexer run exceeded max-duration, exiting cleanly",
@@ -151,9 +142,11 @@ func (p *Poller) runOnce(ctx context.Context) error {
 // runContinuous loops until ctx is cancelled, sleeping PollInterval between passes.
 func (p *Poller) runContinuous(ctx context.Context) error {
 	for {
+		passStart := time.Now()
 		if err := p.processAll(ctx); err != nil {
 			p.log.Error("indexer pass error", "err", err)
 		}
+		p.metrics.ObserveRunDuration("continuous", time.Since(passStart).Seconds())
 		select {
 		case <-ctx.Done():
 			p.log.Info("indexer shutting down")
@@ -169,41 +162,67 @@ func (p *Poller) processAll(ctx context.Context) error {
 	if err := partition.EnsureNextMonthPartition(ctx, p.store); err != nil {
 		p.log.Warn("failed to ensure next month partition", "err", err)
 	}
+	workerCount := p.cfg.Workers
+	if workerCount < 1 {
+		workerCount = runtime.GOMAXPROCS(0)
+	}
+	jobs := make(chan Contract, workerCount)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			defer workers.Done()
+			for contract := range jobs {
+				// Preserve graceful shutdown semantics: contracts already being
+				// processed finish, but queued contracts do not start after cancel.
+				if ctx.Err() != nil {
+					continue
+				}
+				if err := p.processContract(context.WithoutCancel(ctx), contract); err != nil {
+					// One failing contract must not block the rest of the pass.
+					p.log.Error("failed to index contract",
+						"contract_id", contract.ID,
+						"err", err,
+					)
+				}
+			}
+		}()
+	}
+	stopWorkers := func() {
+		close(jobs)
+		workers.Wait()
+	}
 
 	var cursor string
 	for {
 		// Check for shutdown between contract batches.
 		if ctx.Err() != nil {
+			stopWorkers()
 			return nil
 		}
 
 		contracts, next, err := p.store.ListContracts(ctx, cursor, 50)
 		if err != nil {
+			stopWorkers()
 			return fmt.Errorf("list contracts: %w", err)
 		}
 
+	contractBatch:
 		for _, c := range contracts {
 			if ctx.Err() != nil {
-				return nil
+				break contractBatch
 			}
 			if c.Status != "active" && c.Status != "backfilling" {
 				continue
 			}
-			// Once a contract's batch starts, let it run to completion and
-			// commit its cursor even if ctx is cancelled mid-flight (SIGTERM,
-			// or the once-mode max-duration timeout): only the decision to
-			// start the *next* contract's batch respects cancellation, via
-			// the ctx.Err() check above. Without this, a shutdown signal
-			// arriving mid-fetch would abort the in-flight RPC/store calls
-			// and lose that contract's progress for the pass instead of
-			// finishing it cleanly.
-			if err := p.processContract(context.WithoutCancel(ctx), c); err != nil {
-				// Log and continue; one failing contract must not block others.
-				p.log.Error("failed to index contract",
-					"contract_id", c.ID,
-					"err", err,
-				)
+			select {
+			case <-ctx.Done():
+				break contractBatch
+			case jobs <- c:
 			}
+		}
+		if ctx.Err() != nil {
+			break
 		}
 
 		if next == "" {
@@ -211,74 +230,13 @@ func (p *Poller) processAll(ctx context.Context) error {
 		}
 		cursor = next
 	}
-
-	// Record per-network lag after the contract batches have committed their
-	// cursors so the gauge reflects the tip reached by this pass (issue #198).
-	p.observeNetworkLag(ctx)
+	stopWorkers()
 
 	if p.cfg.AnomalyEnabled {
 		p.runAnomalyDetection(ctx)
 	}
 	p.runHealthScores(ctx)
 	return nil
-}
-
-// observeNetworkLag records the per-network indexer lag (issue #198), defined
-// as the network head ledger minus the last ledger committed for that network
-// (its indexer cursor). It runs once per pass for every configured network, so
-// both the currently active and merely cached networks report a value rather
-// than a single hard-coded one.
-//
-// Best-effort by design: a transient RPC or store error for one network is
-// logged and skipped without failing the indexing pass.
-func (p *Poller) observeNetworkLag(ctx context.Context) {
-	if p.metrics == nil {
-		return
-	}
-
-	networks := make([]string, 0, len(p.rpcClients))
-	for network := range p.rpcClients {
-		networks = append(networks, network)
-	}
-	sort.Strings(networks)
-
-	for _, network := range networks {
-		if ctx.Err() != nil {
-			return
-		}
-		rpc := p.rpcClients[network]
-		if rpc == nil {
-			continue
-		}
-
-		label := network
-		if label == "" {
-			label = defaultNetworkLabel
-		}
-
-		head, err := rpc.GetLatestLedger(ctx)
-		if err != nil {
-			p.log.Warn("metrics: latest ledger unavailable",
-				"network", label,
-				"err", err,
-			)
-			continue
-		}
-		if head == nil {
-			continue
-		}
-
-		cursor, err := p.store.GetIndexerCursor(ctx, network)
-		if err != nil {
-			p.log.Warn("metrics: indexer cursor unavailable",
-				"network", label,
-				"err", err,
-			)
-			continue
-		}
-
-		p.metrics.ObserveNetwork(label, head.Sequence, cursor)
-	}
 }
 
 // alertTxKey builds the deterministic de-duplication key for an anomaly alert.
@@ -541,29 +499,18 @@ func (p *Poller) processContract(ctx context.Context, contract Contract) error {
 		return fmt.Errorf("get sync state: %w", err)
 	}
 
-	networkCursor, err := p.store.GetIndexerCursor(ctx, network)
-	if err != nil {
-		p.log.Warn("failed to fetch indexer cursor for network (continuing)",
-			"network", network,
-			"err", err,
-		)
-	}
-
 	var startLedger uint32
 	if syncState.LastLedger == 0 {
-		if networkCursor > 0 {
-			// Resume after the last successfully committed network batch
-			startLedger = networkCursor + 1
-		} else if latest.Sequence > newContractBackfillWindow {
-			// New contract: best-effort backfill from within the retention window.
+		// New contract: best-effort backfill from within the retention window.
+		if latest.Sequence > newContractBackfillWindow {
 			startLedger = latest.Sequence - newContractBackfillWindow
 		} else {
 			startLedger = 1
 		}
-		p.log.Warn("starting sync for contract",
+		p.log.Warn("new contract, starting partial backfill; events before this ledger are unavailable",
 			"contract_id", contractID,
 			"start_ledger", startLedger,
-			"network_cursor", networkCursor,
+			"retention_window_ledgers", newContractBackfillWindow,
 		)
 	} else {
 		startLedger = syncState.LastLedger + 1
@@ -593,36 +540,93 @@ func (p *Poller) processContract(ctx context.Context, contract Contract) error {
 		return err
 	}
 
-	newState := SyncState{ContractID: contractID, LastLedger: endLedger}
-	if err := p.store.BatchInsertWithCursor(ctx, network, endLedger, events, invocations, newState); err != nil {
-		return fmt.Errorf("batch insert with cursor: %w", err)
-	}
-
-	// ---- Wasm hash transition detection (issue #276) ----------------------
-	// Ask the RPC for the current Wasm hash of this contract. When it differs
-	// from the last recorded version, persist a new ContractVersion entry.
-	rpcClient := rpc
-	if rpcClient == nil {
-		rpcClient = p.rpcClient
-	}
-	if rpcClient != nil {
-		if wasmHash, hashErr := rpcClient.GetContractWasmHash(ctx, contractID); hashErr != nil {
-			// Non-fatal: a single RPC miss must not stall the rest of the indexer.
-			p.log.Warn("failed to fetch contract wasm hash, skipping version check",
-				"contract_id", contractID,
-				"err", hashErr,
-			)
-		} else if wasmHash != "" {
-			p.maybeRecordVersion(ctx, contractID, wasmHash, endLedger, invocations)
+	if len(events) > 0 {
+		if err := p.insertEventsWithDLQ(ctx, events); err != nil {
+			return fmt.Errorf("insert events: %w", err)
 		}
 	}
-	// -----------------------------------------------------------------------
+	if len(invocations) > 0 {
+		if err := p.store.BatchInsertInvocations(ctx, invocations); err != nil {
+			return fmt.Errorf("batch insert invocations: %w", err)
+		}
+	}
+
+	newState := SyncState{ContractID: contractID, LastLedger: endLedger}
+	if err := p.store.UpsertSyncState(ctx, newState); err != nil {
+		return fmt.Errorf("upsert sync state: %w", err)
+	}
+
+	// Only count work that was actually committed: a failed insert returns
+	// above, so these series always describe durable progress. The lag sample
+	// uses the batch's final ledger as the committed cursor, which is clamped
+	// at zero against the observed head.
+	p.metrics.AddEventsProcessed(network, len(events))
+	p.metrics.ObserveNetwork(network, latest.Sequence, endLedger)
 
 	log.Info("contract indexed",
 		"events", len(events),
 		"invocations", len(invocations),
 		"duration", time.Since(runStart),
 	)
+	return nil
+}
+
+// insertEventsWithDLQ persists events one at a time, retrying each up to
+// maxEventRetries times. An event that still cannot be stored is parked in the
+// dead-letter queue (issue #202) and the remaining events are still processed,
+// so a single bad event can no longer block a contract's indexing pass.
+//
+// Per-event rather than per-batch by design: BatchInsertEvents rejects the
+// whole slice when any one element is bad, so retrying as a batch would park
+// the good events alongside the bad one.
+func (p *Poller) insertEventsWithDLQ(ctx context.Context, events []Event) error {
+	for _, ev := range events {
+		var lastErr error
+		stored := false
+		for attempt := 1; attempt <= maxEventRetries; attempt++ {
+			if err := p.store.BatchInsertEvents(ctx, []Event{ev}); err != nil {
+				lastErr = err
+				continue
+			}
+			stored = true
+			break
+		}
+		if stored {
+			continue
+		}
+
+		// EventPayload is what the requeue endpoint re-inserts, so it must be a
+		// JSON-serialized Event: handler/dlq.go unmarshals it back into
+		// store.Event. Event holds only plain fields, so a marshal failure is
+		// unreachable in practice — park the row anyway rather than drop it.
+		payload, marshalErr := json.Marshal(ev)
+		msg := "insert retries exhausted"
+		switch {
+		case marshalErr != nil:
+			p.log.Error("marshal event for DLQ", "event_id", ev.ID, "err", marshalErr)
+			payload, msg = nil, "marshal payload: "+marshalErr.Error()
+		case lastErr != nil:
+			msg = lastErr.Error()
+		}
+
+		if err := p.store.InsertFailedEvent(ctx, FailedEvent{
+			EventID:      ev.ID,
+			ContractID:   ev.ContractID,
+			Network:      ev.Network,
+			EventPayload: payload,
+			ErrorMessage: msg,
+			Attempts:     maxEventRetries,
+		}); err != nil {
+			// The event is now stored nowhere, which the caller must know about.
+			return fmt.Errorf("park event %s in DLQ: %w", ev.ID, err)
+		}
+		p.log.Warn("event parked in DLQ",
+			"event_id", ev.ID,
+			"contract_id", ev.ContractID,
+			"attempts", maxEventRetries,
+			"err", msg,
+		)
+	}
 	return nil
 }
 
@@ -663,7 +667,6 @@ func (p *Poller) checkWasmHash(ctx context.Context, rpc RPCClient, contract Cont
 		if err := p.store.UpdateContractWasmHash(ctx, contract.ID, currentHash); err != nil {
 			return fmt.Errorf("baseline contract wasm hash: %w", err)
 		}
-		p.maybeRecordVersion(ctx, contract.ID, currentHash, ledgerFromEntry(res), nil)
 		return nil
 	}
 
@@ -684,7 +687,6 @@ func (p *Poller) checkWasmHash(ctx context.Context, rpc RPCClient, contract Cont
 	if err := p.store.UpdateContractWasmHash(ctx, contract.ID, currentHash); err != nil {
 		return fmt.Errorf("update contract wasm hash: %w", err)
 	}
-	p.maybeRecordVersion(ctx, contract.ID, currentHash, ledgerFromEntry(res), nil)
 
 	p.log.Info("contract code upgraded",
 		"contract_id", contract.ID,
@@ -692,61 +694,6 @@ func (p *Poller) checkWasmHash(ctx context.Context, rpc RPCClient, contract Cont
 		"to_hash", currentHash,
 	)
 	return nil
-}
-
-// maybeRecordVersion compares the observed wasmHash against the latest
-// recorded version and appends a new ContractVersion row when a transition is
-// detected. All errors are logged and treated as non-fatal.
-func (p *Poller) maybeRecordVersion(
-	ctx context.Context,
-	contractID, wasmHash string,
-	endLedger uint32,
-	invocations []Invocation,
-) {
-	prev, err := p.store.GetLatestContractVersion(ctx, contractID)
-	if err != nil && err != ErrVersionNotFound {
-		p.log.Warn("failed to get latest contract version",
-			"contract_id", contractID, "err", err)
-		return
-	}
-
-	// No change: the current hash matches the most recently recorded one.
-	if err == nil && prev.WasmHash == wasmHash {
-		return
-	}
-
-	cv := ContractVersion{
-		ContractID:      contractID,
-		WasmHash:        wasmHash,
-		FirstSeenLedger: int64(endLedger),
-		TxHash:          anchorTxHash(invocations),
-	}
-	if recordErr := p.store.RecordContractVersion(ctx, cv); recordErr != nil {
-		p.log.Warn("failed to record contract version",
-			"contract_id", contractID,
-			"wasm_hash", wasmHash,
-			"err", recordErr,
-		)
-		return
-	}
-	p.log.Info("new wasm hash detected, version recorded",
-		"contract_id", contractID,
-		"wasm_hash", wasmHash,
-		"first_seen_ledger", endLedger,
-	)
-}
-
-// anchorTxHash returns the TxHash of the invocation with the highest ledger,
-// which is the best-effort candidate for the upgrade transaction.
-// Returns an empty string when invocations is empty.
-func anchorTxHash(invocations []Invocation) string {
-	var best Invocation
-	for _, inv := range invocations {
-		if inv.Ledger > best.Ledger {
-			best = inv
-		}
-	}
-	return best.TxHash
 }
 
 // ledgerFromEntry returns the modification ledger of the first instance entry

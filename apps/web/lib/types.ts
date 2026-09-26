@@ -19,6 +19,9 @@ export interface ContractDetail extends Contract {
 
 export interface ContractEvent {
   id: string;
+  /** The API has always returned this; the type was missing it. */
+  contract_id: string;
+  network: string;
   ledger: number;
   ledger_closed_at: string;
   tx_hash: string;
@@ -105,6 +108,12 @@ export interface VolumePoint {
   count: number;
 }
 
+/** One hour bucket of invocation frequency (issue #185). */
+export interface InvocationFrequencyPoint {
+  hour: string; // "HH:00" UTC hour start
+  count: number;
+}
+
 export interface StatsResponse {
   event_volume: VolumePoint[];
   invocation_count: VolumePoint[];
@@ -139,6 +148,29 @@ export interface ContractsListResponse {
 export interface TrackContractRequest {
   id: string;
   label?: string;
+  /** Network the contract lives on: testnet | mainnet | futurenet | standalone. */
+  network?: string;
+}
+
+/**
+ * Result of the tracking wizard's pre-flight check
+ * (POST /api/v1/contracts/validate). `valid` reflects the id's StrKey format
+ * and the network; `already_tracked` is advisory so the wizard can redirect to
+ * the existing entry instead of creating a duplicate.
+ */
+export interface ValidateContractResponse {
+  valid: boolean;
+  contract_id: string;
+  network: string;
+  already_tracked: boolean;
+  label: string | null;
+  reason: string | null;
+}
+
+export interface LabelResolution {
+  label: string;
+  value: string;
+  scope: string;
 }
 
 export type TimeWindow = "24h" | "7d" | "30d" | "all";
@@ -288,6 +320,32 @@ export interface GlobalStats {
   total_storage_entries: number;
 }
 
+// ---- live dashboard (#139) --------------------------------------------------
+
+export interface RecentEventsResponse {
+  events: ContractEvent[];
+}
+
+/**
+ * One contract's event activity over the live window.
+ *
+ * `per_minute` always has exactly `minutes` buckets, oldest first, so the
+ * sparkline's x-axis stays contiguous and does not shift between refreshes.
+ */
+export interface ContractEventRate {
+  contract_id: string;
+  label: string;
+  network: string;
+  total: number;
+  per_minute: number[];
+}
+
+export interface LiveActivityResponse {
+  minutes: number;
+  window_start: string;
+  contracts: ContractEventRate[];
+}
+
 export interface WatchlistItem {
   contract_id: string;
   added_at: string;
@@ -364,4 +422,3 @@ export interface AlertSubscription {
 export interface SubscriptionsResponse {
   subscriptions: AlertSubscription[];
 }
-
