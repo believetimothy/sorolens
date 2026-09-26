@@ -217,7 +217,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "max by (network) (sorolens_indexer_ledger_lag)",
+          "expr": "max by (network) (sorolens_indexer_lag_ledgers)",
           "legendFormat": "{{network}}",
           "refId": "A"
         }

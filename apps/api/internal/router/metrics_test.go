@@ -34,7 +34,7 @@ func newMetricsTestRouter() http.Handler {
 		RedisClient: metricsRedisClient{},
 		Logger:      logger,
 	}
-	return router.New(h)
+	return router.New(h, 0)
 }
 
 // requiredMetrics are the metric names the endpoint must expose: the three
