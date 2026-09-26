@@ -285,6 +285,9 @@ func TestV2CoversEveryV1Route(t *testing.T) {
 		// SEP-48 interface spec (issue #134): an additive read over cached
 		// Wasm metadata with no v2 counterpart.
 		"GET /api/v1/contracts/{id}/spec":             true,
+		// Contract tags (issue #459): contributor-scoped writes with no v2 twin.
+		"POST /api/v1/contracts/{id}/tags":            true,
+		"DELETE /api/v1/contracts/{id}/tags/{tag}":    true,
 	}
 
 	var missing []string

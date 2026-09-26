@@ -37,6 +37,8 @@ from .contract_spec_type import ContractSpecType
 from .contract_stats import ContractStats
 from .contract_status import ContractStatus
 from .contract_summary import ContractSummary
+from .contract_tag_request import ContractTagRequest
+from .contract_tags import ContractTags
 from .contract_upgrade import ContractUpgrade
 from .contract_validation_result import ContractValidationResult
 from .create_alert_subscription import CreateAlertSubscription
@@ -233,6 +235,8 @@ __all__ = (
     "ContractStats",
     "ContractStatus",
     "ContractSummary",
+    "ContractTagRequest",
+    "ContractTags",
     "ContractUpgrade",
     "ContractValidationResult",
     "CreateAlertSubscription",
